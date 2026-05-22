@@ -1,3 +1,73 @@
+# Release Notes — CCE Scheduler Service v1.1.0
+
+**Release Date:** 2026-05-22  
+**Branch:** `demo`  
+**Artifact:** `openphc/cce-scheduler-service:1.1.0`
+
+---
+
+## Overview
+
+Adds **Insights pre-computation** — transition audit logging and step state snapshot tables to support the Insights Service without impacting core operational tables.
+
+---
+
+## Features
+
+### Transition Log (`transition_log`)
+- Append-only audit trail of every time-based state transition
+- Batch-resolves `protocol_definition_id` via single query (N+1 prevention)
+- Indexed by step, time, type, protocol, protocol_definition, and partition
+- Configurable via `cce.scheduler.transition-log.enabled`
+
+### Step State Snapshot (`step_state_snapshot`)
+- Pre-computed step state distribution (PENDING/DUE/OVERDUE/MISSED/COMPLETED/SKIPPED counts)
+- Refreshed once per scan cycle via UPSERT
+- NULL-safe unique constraint using COALESCE functional index
+- Configurable via `cce.scheduler.snapshot.enabled`
+
+### Bug Fixes
+- **N+1 query eliminated** — `TransitionLogService` now batch-resolves all `protocol_definition_id` values in a single query instead of one per step
+- **NULL UNIQUE constraint fixed** — PostgreSQL `UNIQUE(col1, col2)` doesn't work when columns are NULL; replaced with COALESCE-based functional index (V4 migration)
+- **Silent failure logging** — Resolution failures now log at WARN level instead of DEBUG
+
+---
+
+## Database Migrations
+
+| Version | Description |
+|---------|-------------|
+| V2 | Create `transition_log` table with 5 indexes |
+| V3 | Create `step_state_snapshot` table |
+| V4 | Fix snapshot UNIQUE constraint (COALESCE functional index) |
+| V5 | Add `partition_index` index on `transition_log` |
+
+---
+
+## Configuration Additions
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCHEDULER_TRANSITION_LOG_ENABLED` | `true` | Enable/disable transition logging |
+| `SCHEDULER_SNAPSHOT_ENABLED` | `true` | Enable/disable snapshot refresh |
+| `SCHEDULER_SNAPSHOT_PROTOCOL_LEVEL` | `false` | Per-protocol breakdowns (future) |
+
+---
+
+## Infrastructure Requirements
+
+No changes from v1.0.0.
+
+---
+
+## Upgrade Path
+
+From v1.0.0: Flyway will automatically apply migrations V2–V5 on startup. No manual steps required.
+
+---
+
+---
+
 # Release Notes — CCE Scheduler Service v1.0.0
 
 **Release Date:** 2026-05-06  

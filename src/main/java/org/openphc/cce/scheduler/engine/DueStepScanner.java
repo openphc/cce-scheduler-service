@@ -51,7 +51,8 @@ public class DueStepScanner {
                 step.getProtocolInstanceId(),
                 transitionType,
                 thresholdDate,
-                metadata
+                metadata,
+                step.getActionId()
         );
     }
 

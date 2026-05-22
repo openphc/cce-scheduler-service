@@ -19,6 +19,8 @@ public class SchedulerLoop {
     private final LeaderElection leaderElection;
     private final DueStepScanner dueStepScanner;
     private final TransitionPublisher transitionPublisher;
+    private final TransitionLogService transitionLogService;
+    private final StepStateSnapshotService snapshotService;
     private final SchedulerProperties properties;
     private final MeterRegistry meterRegistry;
     private final ObservabilityConfig metrics;
@@ -26,12 +28,16 @@ public class SchedulerLoop {
     public SchedulerLoop(LeaderElection leaderElection,
                          DueStepScanner dueStepScanner,
                          TransitionPublisher transitionPublisher,
+                         TransitionLogService transitionLogService,
+                         StepStateSnapshotService snapshotService,
                          SchedulerProperties properties,
                          MeterRegistry meterRegistry,
                          ObservabilityConfig metrics) {
         this.leaderElection = leaderElection;
         this.dueStepScanner = dueStepScanner;
         this.transitionPublisher = transitionPublisher;
+        this.transitionLogService = transitionLogService;
+        this.snapshotService = snapshotService;
         this.properties = properties;
         this.meterRegistry = meterRegistry;
         this.metrics = metrics;
@@ -54,6 +60,9 @@ public class SchedulerLoop {
             for (int partitionIndex : ownedPartitions) {
                 processPartition(partitionIndex);
             }
+
+            // Refresh state snapshot after all partitions processed
+            snapshotService.refreshSnapshot();
         } finally {
             MDC.clear();
         }
@@ -71,8 +80,11 @@ public class SchedulerLoop {
             metrics.scanStepsCounter("all", partition)
                     .increment(dueSteps.size());
 
-            // Publish transitions
-            int published = transitionPublisher.publishAll(dueSteps, partitionIndex);
+            // Publish transitions and get successfully published steps
+            PublishResult result = transitionPublisher.publishAllWithResult(dueSteps, partitionIndex);
+
+            // Log successful transitions
+            transitionLogService.logTransitions(result.publishedSteps(), partitionIndex);
 
             // Record scan duration
             timerSample.stop(metrics.scanDurationTimer(partition));
@@ -81,7 +93,7 @@ public class SchedulerLoop {
             metrics.cycleCounter(partition).increment();
 
             log.info("Cycle complete — partition={}, scanned={}, published={}",
-                    partitionIndex, dueSteps.size(), published);
+                    partitionIndex, dueSteps.size(), result.successCount());
 
         } catch (Exception e) {
             log.warn("Error processing partition {} — cycle continues", partitionIndex, e);

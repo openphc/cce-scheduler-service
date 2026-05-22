@@ -15,6 +15,8 @@ sequenceDiagram
     participant Scanner as DueStepScanner
     participant DB as PostgreSQL
     participant Publisher as TransitionPublisher
+    participant TLS as TransitionLogService
+    participant SNS as StepStateSnapshotService
     participant Kafka as Apache Kafka
     participant Metrics as Micrometer
 
@@ -26,23 +28,29 @@ sequenceDiagram
         else ownedPartitions = [P1, P2, ...]
             loop For each owned partition P
                 SL->>Scanner: scan(batchSize, P, totalPartitions)
-                Scanner->>DB: SELECT step_instance<br/>WHERE state/date thresholds met<br/>AND MOD(ABS(HASHTEXT(protocol_instance_id)), N) = P<br/>ORDER BY threshold ASC<br/>LIMIT batchSize
+                Scanner->>DB: SELECT step_instance<br/>WHERE state/date thresholds met<br/>AND MOD(ABS(MD5(protocol_instance_id)::bit(32)::int), N) = P<br/>ORDER BY threshold ASC<br/>LIMIT batchSize
                 DB-->>Scanner: List of StepInstance
                 Scanner-->>SL: List of DueStep
 
                 alt Steps found
+                    SL->>Publisher: publishAllWithResult(dueSteps, P)
                     loop For each DueStep
-                        SL->>Publisher: publish(dueStep)
                         Publisher->>Kafka: Send SchedulerTriggerMessage<br/>key=protocolInstanceId
                         Kafka-->>Publisher: Ack
-                        Publisher->>Metrics: publish.success++ (partition=P)
                     end
+                    Publisher-->>SL: PublishResult(successCount, publishedSteps)
+                    Publisher->>Metrics: publish.success++ (partition=P)
+
+                    SL->>TLS: logTransitions(publishedSteps, P)
+                    TLS->>DB: Batch resolve protocol_definition_ids
+                    TLS->>DB: INSERT INTO transition_log (batch)
                 end
 
-                SL->>Leader: updateHeartbeat(P)
-                Leader->>DB: UPDATE scheduler_lease<br/>SET last_heartbeat=now()<br/>WHERE partition_index=P
                 SL->>Metrics: Record cycle (partition=P)
             end
+
+            SL->>SNS: refreshSnapshot()
+            SNS->>DB: UPSERT step_state_snapshot<br/>(global state counts)
         end
     end
 ```

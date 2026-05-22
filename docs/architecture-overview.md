@@ -107,16 +107,24 @@ src/main/java/org/openphc/cce/scheduler/
 │   ├── model/
 │   │   ├── StepInstance.java                 # Read-only entity (@Immutable)
 │   │   ├── SchedulerLease.java               # Singleton lease entity
+│   │   ├── TransitionLog.java                # Transition audit log entity
+│   │   ├── StepStateSnapshot.java            # Pre-computed state counts entity
 │   │   └── enums/
-│   │       └── StepState.java                # PENDING, DUE, OVERDUE, MISSED, COMPLETED, SKIPPED
+│   │       ├── StepState.java                # PENDING, DUE, OVERDUE, MISSED, COMPLETED, SKIPPED
+│   │       └── TransitionType.java           # PENDING_TO_DUE, DUE_TO_OVERDUE, OVERDUE_TO_MISSED
 │   └── repository/
-│       ├── StepInstanceRepository.java       # Read-only queries
-│       └── SchedulerLeaseRepository.java     # Lease upsert
+│       ├── StepInstanceRepository.java       # Read-only queries + batch protocol_definition_id lookup
+│       ├── SchedulerLeaseRepository.java     # Lease upsert
+│       ├── TransitionLogRepository.java      # Transition log persistence
+│       └── StepStateSnapshotRepository.java  # Snapshot upsert (COALESCE-based conflict)
 ├── engine/
 │   ├── SchedulerLoop.java                    # @Scheduled main loop with leader guard
 │   ├── DueStepScanner.java                   # PostgreSQL query + transition determination
-│   ├── DueStep.java                          # Record: stepInstanceId, transitionType, metadata
-│   └── TransitionPublisher.java              # Orchestrates Kafka publish per DueStep
+│   ├── DueStep.java                          # Record: stepInstanceId, protocolInstanceId, transitionType, thresholdDate, metadata, actionId
+│   ├── TransitionPublisher.java              # Orchestrates Kafka publish per DueStep
+│   ├── PublishResult.java                    # Record: successCount, publishedSteps
+│   ├── TransitionLogService.java             # Batch transition logging with N+1 prevention
+│   └── StepStateSnapshotService.java         # Periodic snapshot refresh
 ├── health/
 │   └── LeaderHealthIndicator.java            # Custom health indicator for leader status
 ├── kafka/
@@ -129,13 +137,17 @@ src/main/resources/
 ├── application.yml
 ├── application-docker.yml
 └── db/migration/
-    └── V1__create_scheduler_lease.sql
+    ├── V1__create_scheduler_lease.sql
+    ├── V2__create_transition_log.sql
+    ├── V3__create_step_state_snapshot.sql
+    ├── V4__fix_snapshot_unique_constraint.sql
+    └── V5__add_partition_index_idx.sql
 
 src/test/java/org/openphc/cce/scheduler/      # Unit tests
 src/integrationTest/java/org/openphc/cce/scheduler/  # Integration tests
 ```
 
-**Total:** ~19 source files across 8 packages.
+**Total:** ~25 source files across 8 packages.
 
 ---
 
@@ -156,12 +168,17 @@ Each instance only scans the **partitions** it owns (determined by acquired advi
       - Filter: MOD(ABS(HASHTEXT(protocol_instance_id::text)), totalPartitions) = P
       - Determine transition type for each row
       - Return List<DueStep>
-   b. TransitionPublisher.publish(dueSteps)
+   b. TransitionPublisher.publishAllWithResult(dueSteps, P)
       - For each DueStep: build SchedulerTriggerMessage, publish to Kafka synchronously
       - Track success/failure counts
-   c. Update scheduler_lease heartbeat for partition P
+      - Return PublishResult (successCount, publishedSteps)
+   c. TransitionLogService.logTransitions(publishedSteps, P)
+      - Batch-resolve protocol_definition_ids (single query for all protocol_instance_ids)
+      - Persist TransitionLog entries for each successfully published step
    d. Record metrics (scan duration, batch size, transitions by type, partition=P)
-3. Wait fixedDelay → repeat
+3. StepStateSnapshotService.refreshSnapshot()
+   - UPSERT global state counts from step_instance into step_state_snapshot
+4. Wait fixedDelay → repeat
 ```
 
 ### 4.2 Partitioned Leader Election Lifecycle
@@ -272,7 +289,10 @@ The Scheduler connects to the **same PostgreSQL database** (`cce_collector`) as 
 | Table | Owner | Scheduler Access | Purpose |
 |---|---|---|---|
 | `step_instance` | Compliance Service | **Read-only** | Query for due transitions (partition-filtered) |
+| `protocol_instance` | Compliance Service | **Read-only** | Resolve `protocol_definition_id` for transition logs (batch lookup) |
 | `scheduler_lease` | Scheduler Service | **Read-write** | Partition leader heartbeats (one row per partition) |
+| `transition_log` | Scheduler Service | **Read-write** | Append-only audit trail of triggered transitions |
+| `step_state_snapshot` | Scheduler Service | **Read-write** | Pre-computed step state distribution (upsert) |
 | All other tables | Compliance Service | **No access** | Not used by Scheduler |
 
 **Important:** The Scheduler uses `@Immutable` on its `StepInstance` entity to prevent accidental writes. The actual state transitions are performed by the Compliance Service after consuming `SchedulerTriggerMessage` from Kafka.

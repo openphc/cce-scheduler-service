@@ -15,6 +15,8 @@ import org.openphc.cce.scheduler.domain.model.enums.TransitionType;
 import org.openphc.cce.scheduler.engine.DueStep;
 import org.openphc.cce.scheduler.engine.DueStepScanner;
 import org.openphc.cce.scheduler.engine.SchedulerLoop;
+import org.openphc.cce.scheduler.engine.StepStateSnapshotService;
+import org.openphc.cce.scheduler.engine.TransitionLogService;
 import org.openphc.cce.scheduler.engine.TransitionPublisher;
 import org.openphc.cce.scheduler.kafka.SchedulerTriggerMessage;
 import org.openphc.cce.scheduler.kafka.SchedulerTriggerProducer;
@@ -57,6 +59,12 @@ class SchedulerEndToEndIntegrationTest {
     @Mock
     private SchedulerTriggerProducer triggerProducer;
 
+    @Mock
+    private TransitionLogService transitionLogService;
+
+    @Mock
+    private StepStateSnapshotService snapshotService;
+
     private SchedulerProperties properties;
     private SimpleMeterRegistry meterRegistry;
     private ObservabilityConfig metrics;
@@ -72,7 +80,7 @@ class SchedulerEndToEndIntegrationTest {
         metrics = new ObservabilityConfig(meterRegistry);
         transitionPublisher = new TransitionPublisher(triggerProducer, metrics);
         schedulerLoop = new SchedulerLoop(leaderElection, dueStepScanner,
-                transitionPublisher, properties, meterRegistry, metrics);
+                transitionPublisher, transitionLogService, snapshotService, properties, meterRegistry, metrics);
     }
 
     @Nested
@@ -199,7 +207,7 @@ class SchedulerEndToEndIntegrationTest {
         void setUpMultiPartition() {
             properties.setTotalPartitions(2);
             schedulerLoop = new SchedulerLoop(leaderElection, dueStepScanner,
-                    transitionPublisher, properties, meterRegistry, metrics);
+                    transitionPublisher, transitionLogService, snapshotService, properties, meterRegistry, metrics);
         }
 
         @Test
@@ -240,7 +248,7 @@ class SchedulerEndToEndIntegrationTest {
         void greedyAcquisition_oneInstanceOwnsAll() {
             properties.setTotalPartitions(3);
             schedulerLoop = new SchedulerLoop(leaderElection, dueStepScanner,
-                    transitionPublisher, properties, meterRegistry, metrics);
+                    transitionPublisher, transitionLogService, snapshotService, properties, meterRegistry, metrics);
 
             when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0, 1, 2));
             when(dueStepScanner.scan(anyInt(), eq(3))).thenReturn(Collections.emptyList());
@@ -259,7 +267,7 @@ class SchedulerEndToEndIntegrationTest {
 
             // Instance 1 owns partitions 0,1
             SchedulerLoop loop1 = new SchedulerLoop(leaderElection, dueStepScanner,
-                    transitionPublisher, properties, meterRegistry, metrics);
+                    transitionPublisher, transitionLogService, snapshotService, properties, meterRegistry, metrics);
             when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0, 1));
             when(dueStepScanner.scan(anyInt(), eq(3))).thenReturn(Collections.emptyList());
 
@@ -280,7 +288,7 @@ class SchedulerEndToEndIntegrationTest {
         void failover_survivingInstanceAcquiresOrphanedPartitions() {
             properties.setTotalPartitions(3);
             schedulerLoop = new SchedulerLoop(leaderElection, dueStepScanner,
-                    transitionPublisher, properties, meterRegistry, metrics);
+                    transitionPublisher, transitionLogService, snapshotService, properties, meterRegistry, metrics);
 
             // Initially instance owns only partition 0
             when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0));
@@ -367,7 +375,7 @@ class SchedulerEndToEndIntegrationTest {
         void scannerFailure_doesNotStopOtherPartitions() {
             properties.setTotalPartitions(3);
             schedulerLoop = new SchedulerLoop(leaderElection, dueStepScanner,
-                    transitionPublisher, properties, meterRegistry, metrics);
+                    transitionPublisher, transitionLogService, snapshotService, properties, meterRegistry, metrics);
 
             when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0, 1, 2));
             when(dueStepScanner.scan(0, 3)).thenThrow(new RuntimeException("DB timeout"));
@@ -412,7 +420,8 @@ class SchedulerEndToEndIntegrationTest {
                 protocolInstanceId,
                 type,
                 OffsetDateTime.now(ZoneOffset.UTC).minusHours(1),
-                JsonNodeFactory.instance.objectNode()
+                JsonNodeFactory.instance.objectNode(),
+                "action-1"
         );
     }
 }

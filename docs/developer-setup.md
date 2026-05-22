@@ -116,6 +116,11 @@ cce:
     advisory-lock-key: ${SCHEDULER_LOCK_KEY:100001}
     total-partitions: ${SCHEDULER_TOTAL_PARTITIONS:1}
     lock-acquire-delay-ms: ${SCHEDULER_LOCK_ACQUIRE_DELAY:50}
+    transition-log:
+      enabled: ${SCHEDULER_TRANSITION_LOG_ENABLED:true}
+    snapshot:
+      enabled: ${SCHEDULER_SNAPSHOT_ENABLED:true}
+      protocol-level: ${SCHEDULER_SNAPSHOT_PROTOCOL_LEVEL:false}
   kafka:
     topics:
       scheduler-triggers: ${KAFKA_TOPIC_SCHEDULER_TRIGGERS:cce.scheduler.triggers}
@@ -154,6 +159,9 @@ management:
 | `SCHEDULER_LEADER_RETRY` | `5000` | Leader retry interval in milliseconds |
 | `SCHEDULER_LOCK_KEY` | `100001` | Base PostgreSQL advisory lock key. Partitions use keys `LOCK_KEY + 0` through `LOCK_KEY + TOTAL_PARTITIONS - 1`. |
 | `SCHEDULER_TOTAL_PARTITIONS` | `1` | Number of scan partitions for horizontal scaling. `1` = single-leader (default). |
+| `SCHEDULER_TRANSITION_LOG_ENABLED` | `true` | Enable/disable transition audit logging |
+| `SCHEDULER_SNAPSHOT_ENABLED` | `true` | Enable/disable step state snapshot refresh |
+| `SCHEDULER_SNAPSHOT_PROTOCOL_LEVEL` | `false` | Enable per-protocol breakdowns in snapshot |
 
 ## 4. Project Structure
 
@@ -185,7 +193,12 @@ cce-scheduler-service/
     │   │   └── leader/
     │   └── resources/
     │       ├── application.yml
-    │       └── db/migration/V1__create_scheduler_lease.sql
+    │       └── db/migration/
+    │           ├── V1__create_scheduler_lease.sql
+    │           ├── V2__create_transition_log.sql
+    │           ├── V3__create_step_state_snapshot.sql
+    │           ├── V4__fix_snapshot_unique_constraint.sql
+    │           └── V5__add_partition_index_idx.sql
     ├── test/java/                    # Unit tests
     └── integrationTest/java/         # Integration tests (Testcontainers)
 ```

@@ -38,4 +38,20 @@ public class SchedulerProperties {
     @Min(0)
     @Max(500)
     private int lockAcquireDelayMs = 50;
+
+    private TransitionLogProperties transitionLog = new TransitionLogProperties();
+    private SnapshotProperties snapshot = new SnapshotProperties();
+
+    @Getter
+    @Setter
+    public static class TransitionLogProperties {
+        private boolean enabled = true;
+    }
+
+    @Getter
+    @Setter
+    public static class SnapshotProperties {
+        private boolean enabled = true;
+        private boolean protocolLevel = false;
+    }
 }

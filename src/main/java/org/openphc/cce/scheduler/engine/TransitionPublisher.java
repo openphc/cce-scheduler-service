@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 
 @Component
@@ -28,8 +29,16 @@ public class TransitionPublisher {
      * Returns the count of successfully published messages.
      */
     public int publishAll(List<DueStep> dueSteps, int partitionIndex) {
+        return publishAllWithResult(dueSteps, partitionIndex).successCount();
+    }
+
+    /**
+     * Publishes transition messages and returns both the count and list of successfully published steps.
+     */
+    public PublishResult publishAllWithResult(List<DueStep> dueSteps, int partitionIndex) {
         String partition = String.valueOf(partitionIndex);
         int successCount = 0;
+        List<DueStep> publishedSteps = new ArrayList<>();
 
         for (DueStep step : dueSteps) {
             String correlationId = buildCorrelationId(step);
@@ -53,6 +62,7 @@ public class TransitionPublisher {
 
                 if (success) {
                     successCount++;
+                    publishedSteps.add(step);
                     metrics.publishSuccessCounter(step.transitionType().name(), partition).increment();
                 } else {
                     log.warn("Failed to publish transition {} for step {}",
@@ -68,7 +78,7 @@ public class TransitionPublisher {
 
         log.info("Published {}/{} transitions for partition {}",
                 successCount, dueSteps.size(), partitionIndex);
-        return successCount;
+        return new PublishResult(successCount, publishedSteps);
     }
 
     public static String buildCorrelationId(DueStep step) {

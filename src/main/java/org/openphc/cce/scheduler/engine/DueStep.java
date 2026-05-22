@@ -11,6 +11,7 @@ public record DueStep(
         UUID protocolInstanceId,
         TransitionType transitionType,
         OffsetDateTime thresholdDate,
-        JsonNode metadata
+        JsonNode metadata,
+        String actionId
 ) {
 }

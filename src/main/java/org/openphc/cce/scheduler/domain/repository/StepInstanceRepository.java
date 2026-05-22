@@ -30,4 +30,18 @@ public interface StepInstanceRepository extends JpaRepository<StepInstance, UUID
             @Param("totalPartitions") int totalPartitions,
             @Param("batchSize") int batchSize
     );
+
+    @Query(value = """
+            SELECT pi.protocol_definition_id
+            FROM protocol_instance pi
+            WHERE pi.id = :protocolInstanceId
+            """, nativeQuery = true)
+    UUID findProtocolDefinitionId(@Param("protocolInstanceId") UUID protocolInstanceId);
+
+    @Query(value = """
+            SELECT pi.id, pi.protocol_definition_id
+            FROM protocol_instance pi
+            WHERE pi.id IN :protocolInstanceIds
+            """, nativeQuery = true)
+    List<Object[]> findProtocolDefinitionIds(@Param("protocolInstanceIds") List<UUID> protocolInstanceIds);
 }

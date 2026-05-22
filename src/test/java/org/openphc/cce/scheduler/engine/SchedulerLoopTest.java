@@ -38,6 +38,12 @@ class SchedulerLoopTest {
     @Mock
     private TransitionPublisher transitionPublisher;
 
+    @Mock
+    private TransitionLogService transitionLogService;
+
+    @Mock
+    private StepStateSnapshotService snapshotService;
+
     private SchedulerProperties properties;
     private SimpleMeterRegistry meterRegistry;
     private ObservabilityConfig metrics;
@@ -50,7 +56,8 @@ class SchedulerLoopTest {
         meterRegistry = new SimpleMeterRegistry();
         metrics = new ObservabilityConfig(meterRegistry);
         schedulerLoop = new SchedulerLoop(leaderElection, dueStepScanner,
-                transitionPublisher, properties, meterRegistry, metrics);
+                transitionPublisher, transitionLogService, snapshotService,
+                properties, meterRegistry, metrics);
     }
 
     @Test
@@ -60,7 +67,7 @@ class SchedulerLoopTest {
         schedulerLoop.executeCycle();
 
         verify(dueStepScanner, never()).scan(anyInt(), anyInt());
-        verify(transitionPublisher, never()).publishAll(anyList(), anyInt());
+        verify(transitionPublisher, never()).publishAllWithResult(anyList(), anyInt());
     }
 
     @Test
@@ -68,33 +75,38 @@ class SchedulerLoopTest {
         when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0));
         List<DueStep> steps = List.of(buildDueStep());
         when(dueStepScanner.scan(0, 4)).thenReturn(steps);
-        when(transitionPublisher.publishAll(steps, 0)).thenReturn(1);
+        when(transitionPublisher.publishAllWithResult(steps, 0))
+                .thenReturn(new PublishResult(1, steps));
 
         schedulerLoop.executeCycle();
 
         verify(dueStepScanner).scan(0, 4);
-        verify(transitionPublisher).publishAll(steps, 0);
+        verify(transitionPublisher).publishAllWithResult(steps, 0);
+        verify(transitionLogService).logTransitions(steps, 0);
+        verify(snapshotService).refreshSnapshot();
     }
 
     @Test
     void executeCycle_multiplePartitions_processesEach() {
         when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0, 1, 2));
         when(dueStepScanner.scan(anyInt(), anyInt())).thenReturn(Collections.emptyList());
-        when(transitionPublisher.publishAll(anyList(), anyInt())).thenReturn(0);
+        when(transitionPublisher.publishAllWithResult(anyList(), anyInt()))
+                .thenReturn(new PublishResult(0, Collections.emptyList()));
 
         schedulerLoop.executeCycle();
 
         verify(dueStepScanner).scan(0, 4);
         verify(dueStepScanner).scan(1, 4);
         verify(dueStepScanner).scan(2, 4);
-        verify(transitionPublisher, times(3)).publishAll(anyList(), anyInt());
+        verify(transitionPublisher, times(3)).publishAllWithResult(anyList(), anyInt());
     }
 
     @Test
     void executeCycle_emptyBatch_stillRecordsMetrics() {
         when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0));
         when(dueStepScanner.scan(0, 4)).thenReturn(Collections.emptyList());
-        when(transitionPublisher.publishAll(anyList(), anyInt())).thenReturn(0);
+        when(transitionPublisher.publishAllWithResult(anyList(), anyInt()))
+                .thenReturn(new PublishResult(0, Collections.emptyList()));
 
         schedulerLoop.executeCycle();
 
@@ -107,7 +119,8 @@ class SchedulerLoopTest {
         when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0, 1));
         when(dueStepScanner.scan(0, 4)).thenThrow(new RuntimeException("DB error"));
         when(dueStepScanner.scan(1, 4)).thenReturn(Collections.emptyList());
-        when(transitionPublisher.publishAll(anyList(), anyInt())).thenReturn(0);
+        when(transitionPublisher.publishAllWithResult(anyList(), anyInt()))
+                .thenReturn(new PublishResult(0, Collections.emptyList()));
 
         // Should not throw
         schedulerLoop.executeCycle();
@@ -120,7 +133,8 @@ class SchedulerLoopTest {
     void executeCycle_recordsScanDuration() {
         when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0));
         when(dueStepScanner.scan(0, 4)).thenReturn(Collections.emptyList());
-        when(transitionPublisher.publishAll(anyList(), anyInt())).thenReturn(0);
+        when(transitionPublisher.publishAllWithResult(anyList(), anyInt()))
+                .thenReturn(new PublishResult(0, Collections.emptyList()));
 
         schedulerLoop.executeCycle();
 
@@ -133,7 +147,8 @@ class SchedulerLoopTest {
         when(leaderElection.getOwnedPartitions()).thenReturn(List.of(0));
         List<DueStep> steps = List.of(buildDueStep(), buildDueStep(), buildDueStep());
         when(dueStepScanner.scan(0, 4)).thenReturn(steps);
-        when(transitionPublisher.publishAll(steps, 0)).thenReturn(3);
+        when(transitionPublisher.publishAllWithResult(steps, 0))
+                .thenReturn(new PublishResult(3, steps));
 
         schedulerLoop.executeCycle();
 
@@ -148,7 +163,8 @@ class SchedulerLoopTest {
                 UUID.randomUUID(),
                 TransitionType.PENDING_TO_DUE,
                 OffsetDateTime.now(ZoneOffset.UTC),
-                JsonNodeFactory.instance.objectNode()
+                JsonNodeFactory.instance.objectNode(),
+                "action-1"
         );
     }
 }

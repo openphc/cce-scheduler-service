@@ -1,8 +1,8 @@
 # Insights Pre-Computation Optimization
 
 > **CCE Scheduler Service** — Pre-computed transition metrics for the Insights Service  
-> **Status**: Proposed | **Target**: v1.2.0  
-> **Last Updated**: 2025-05-28  
+> **Status**: Implemented | **Target**: v1.1.0  
+> **Last Updated**: 2026-05-22  
 > **Deployment Model**: Fresh deployment (no existing data to migrate)
 
 ---
@@ -54,6 +54,7 @@ CREATE INDEX idx_transition_log_time ON transition_log (transitioned_at);
 CREATE INDEX idx_transition_log_type ON transition_log (transition_type);
 CREATE INDEX idx_transition_log_protocol ON transition_log (protocol_instance_id);
 CREATE INDEX idx_transition_log_protocol_def ON transition_log (protocol_definition_id);
+CREATE INDEX idx_transition_log_partition ON transition_log (partition_index);
 ```
 
 **Update trigger:** In `SchedulerLoop.executeCycle()`, after successfully publishing the Kafka trigger event for each step, also persist a `transition_log` entry in the same cycle. The `protocol_definition_id` is read from the associated `protocol_instance` (resolved via `step_instance.protocol_instance_id`).
@@ -81,7 +82,7 @@ CREATE INDEX idx_transition_log_protocol_def ON transition_log (protocol_definit
 CREATE TABLE step_state_snapshot (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     protocol_definition_id UUID,               -- NULL for global snapshot
-    facility_id            VARCHAR(100),        -- NULL for global/protocol-level snapshot
+    facility_id            VARCHAR(100),        -- NULL for global/protocol-level snapshot (future extension)
     pending_count          INTEGER NOT NULL DEFAULT 0,
     due_count              INTEGER NOT NULL DEFAULT 0,
     overdue_count          INTEGER NOT NULL DEFAULT 0,
@@ -89,9 +90,15 @@ CREATE TABLE step_state_snapshot (
     completed_count        INTEGER NOT NULL DEFAULT 0,
     skipped_count          INTEGER NOT NULL DEFAULT 0,
     total_count            INTEGER NOT NULL DEFAULT 0,
-    snapshot_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (protocol_definition_id, facility_id)
+    snapshot_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Functional unique index handles NULLs correctly for UPSERT
+CREATE UNIQUE INDEX idx_snapshot_protocol_facility
+    ON step_state_snapshot (
+        COALESCE(protocol_definition_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        COALESCE(facility_id, '')
+    );
 ```
 
 **Update trigger:** At the end of each `SchedulerLoop.executeCycle()` (after all transitions for the current partition), recalculate the global state counts. The `protocol_definition_id` is resolved via `step_instance → protocol_instance` JOIN:
@@ -109,7 +116,7 @@ SELECT
     COUNT(*),
     now()
 FROM step_instance si
-ON CONFLICT (protocol_definition_id, facility_id)
+ON CONFLICT (COALESCE(protocol_definition_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(facility_id, ''))
 DO UPDATE SET
     pending_count = EXCLUDED.pending_count,
     due_count = EXCLUDED.due_count,
@@ -160,9 +167,11 @@ All optimizations are included in the initial schema:
 
 | Order | Migration | Description |
 |-------|-----------|-------------|
-| V1 | `V1__initial_schema.sql` | Scheduler core tables (if any) |
-| V2 | `V2__create_transition_log.sql` | Transition log table |
+| V1 | `V1__create_scheduler_lease.sql` | Scheduler core tables |
+| V2 | `V2__create_transition_log.sql` | Transition log table with 5 indexes |
 | V3 | `V3__create_step_state_snapshot.sql` | Step state snapshot table |
+| V4 | `V4__fix_snapshot_unique_constraint.sql` | Replace UNIQUE constraint with COALESCE functional index |
+| V5 | `V5__add_partition_index_idx.sql` | Add partition_index index on transition_log |
 
 ### 4.2 Configuration Additions
 

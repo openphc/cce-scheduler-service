@@ -38,12 +38,25 @@ All configuration is via environment variables. Defaults are suitable for local 
 | `SCHEDULER_LOCK_KEY`            | `100001`  | Base pg_advisory_lock key                            |
 | `SCHEDULER_TOTAL_PARTITIONS`    | `1`       | Number of partitions for multi-leader mode           |
 | `SCHEDULER_LOCK_ACQUIRE_DELAY`  | `50`      | Delay between partition lock attempts (ms)           |
+| `SCHEDULER_TRANSITION_LOG_ENABLED` | `true` | Enable/disable transition audit logging             |
+| `SCHEDULER_SNAPSHOT_ENABLED`    | `true`    | Enable/disable step state snapshot refresh           |
+| `SCHEDULER_SNAPSHOT_PROTOCOL_LEVEL` | `false` | Enable per-protocol breakdowns in snapshot         |
 
 ---
 
 ## 2. Database Setup
 
-The service uses Flyway for automatic schema migration. On first startup it will create the `scheduler_lease` table in the shared `cce_collector` database.
+The service uses Flyway for automatic schema migration. On first startup it will create its tables in the shared `cce_collector` database.
+
+**Migrations:**
+
+| Version | Description |
+|---------|-------------|
+| V1 | Create `scheduler_lease` table with default partition row |
+| V2 | Create `transition_log` table with indexes |
+| V3 | Create `step_state_snapshot` table |
+| V4 | Fix snapshot UNIQUE constraint for NULL handling (COALESCE index) |
+| V5 | Add `partition_index` index on `transition_log` |
 
 **Pre-requisites:**
 - The `cce_collector` database must exist
@@ -53,7 +66,10 @@ The service uses Flyway for automatic schema migration. On first startup it will
 ```sql
 -- Minimal grants (if not using superuser)
 GRANT SELECT ON step_instance TO scheduler_user;
+GRANT SELECT ON protocol_instance TO scheduler_user;
 GRANT ALL ON scheduler_lease TO scheduler_user;
+GRANT ALL ON transition_log TO scheduler_user;
+GRANT ALL ON step_state_snapshot TO scheduler_user;
 GRANT USAGE ON SCHEMA public TO scheduler_user;
 ```
 

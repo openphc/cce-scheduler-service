@@ -21,6 +21,8 @@ The Scheduler detects when clinical protocol steps become **DUE**, **OVERDUE**, 
 - **Scan-publish loop** — runs on a configurable `fixedDelay` cadence (default: 5 seconds)
 - **Leader election** — uses PostgreSQL advisory locks for active-standby HA (deploy 2+ instances)
 - **Read-only database access** — never writes to `step_instance`; the Compliance Service handles actual transitions
+- **Transition logging** — persists an audit trail of triggered transitions to `transition_log` table for Insights Service
+- **State snapshot** — maintains pre-computed step state distribution in `step_state_snapshot` (refreshed each cycle)
 - **Idempotent** — duplicate Kafka messages are safely ignored by the Compliance Service
 - **Single Kafka topic** — produces to `cce.scheduler.triggers`, consumes from none
 
@@ -124,8 +126,9 @@ See [docs/developer-setup.md](docs/developer-setup.md) for the full configuratio
 1. **Leader check** — only the leader instance processes; standby instances skip
 2. **Scan** — query `step_instance` for rows where time thresholds are met
 3. **Publish** — send a `SchedulerTriggerMessage` to Kafka for each due step
-4. **Heartbeat** — update `scheduler_lease` table
-5. **Wait** — `fixedDelay` then repeat
+4. **Log transitions** — batch-persist `transition_log` entries for successfully published steps
+5. **Refresh snapshot** — upsert `step_state_snapshot` with current state distribution (once per cycle)
+6. **Wait** — `fixedDelay` then repeat
 
 ### High Availability
 
@@ -141,9 +144,9 @@ See [docs/developer-setup.md](docs/developer-setup.md) for the full configuratio
 src/main/java/org/openphc/cce/scheduler/
 ├── SchedulerServiceApplication.java     # @SpringBootApplication + @EnableScheduling
 ├── config/                              # Configuration properties, Kafka, JPA, scheduling
-├── domain/model/                        # StepInstance (read-only), SchedulerLease, StepState enum
-├── domain/repository/                   # JPA repositories
-├── engine/                              # SchedulerLoop, DueStepScanner, TransitionPublisher
+├── domain/model/                        # StepInstance (read-only), SchedulerLease, TransitionLog, StepStateSnapshot, enums
+├── domain/repository/                   # JPA repositories (StepInstance, SchedulerLease, TransitionLog, StepStateSnapshot)
+├── engine/                              # SchedulerLoop, DueStepScanner, TransitionPublisher, TransitionLogService, StepStateSnapshotService
 ├── health/                              # LeaderHealthIndicator
 ├── kafka/                               # SchedulerTriggerMessage, SchedulerTriggerProducer
 └── leader/                              # LeaderElection (pg_advisory_lock)
@@ -207,3 +210,5 @@ Key metrics: `cce.scheduler.scan.duration`, `cce.scheduler.scan.steps`, `cce.sch
 | [Kafka Events](docs/kafka-events.md) | Topic schema, sample payloads, producer configuration, delivery guarantees |
 | [Flow Diagrams](docs/flow-diagrams.md) | Mermaid diagrams for scan loop, leader election, failover scenarios |
 | [Developer Setup](docs/developer-setup.md) | Prerequisites, build commands, full configuration reference, Docker build |
+| [Deployment Guide](docs/deployment-guide.md) | Configuration reference, Docker, Kubernetes, scaling, observability |
+| [Insights Optimization](docs/insights-optimization.md) | Design spec for transition_log and step_state_snapshot pre-computation |
